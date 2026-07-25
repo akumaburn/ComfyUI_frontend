@@ -24,16 +24,15 @@ import type { CanvasPointerEvent } from './types/events'
  */
 export class CanvasPointer {
   /**
-   * Maximum time in milliseconds to ignore click drift.
+   * Deprecated: no longer used for click/drag disambiguation.
    *
-   * This is the upper bound on how long after pointerdown the system will wait
-   * before deciding "this is a drag, not a click" when the pointer hasn't moved
-   * past {@link maxClickDrift}. Keep this short — drags should feel instant.
-   * Disambiguation between click and drag is primarily handled by distance
-   * ({@link maxClickDrift}); this time threshold only matters when the user
-   * holds the pointer still then releases. ~2 frames at 60fps is plenty.
+   * Click vs drag is now determined purely by distance ({@link maxClickDrift}):
+   * drag starts when the pointer moves past the threshold, regardless of time.
+   * This is essential for VR browsers where controller/gaze tracking jitter
+   * would otherwise trigger unintended drags within milliseconds.
    *
-   * Overridden at runtime by the `Comfy.Pointer.ClickBufferTime` user setting.
+   * Kept for backward compatibility with the `Comfy.Pointer.ClickBufferTime`
+   * user setting which may read this value.
    */
   static bufferTime = 32
 
@@ -50,7 +49,7 @@ export class CanvasPointer {
     this._maxClickDrift2 = value * value
   }
 
-  private static _maxClickDrift = 6
+  private static _maxClickDrift = 30
   /** {@link maxClickDrift} squared.  Used to calculate click drift without `sqrt`. */
   private static _maxClickDrift2 = this._maxClickDrift ** 2
 
@@ -77,6 +76,17 @@ export class CanvasPointer {
 
   /** Set to true when if the pointer moves far enough after a down event, before the corresponding up event is fired. */
   dragStarted: boolean = false
+
+  /**
+   * Tracks whether a genuine `pointermove` event with the expected button
+   * state was received between `down()` and the corresponding `up()`.
+   *
+   * This is distinct from `dragStarted`: it is set on the very first valid
+   * move event, before the drag threshold is exceeded. It prevents click-to-
+   * drag activation in VR browsers where `pointerup` may fire at a different
+   * position than `pointerdown` without any intermediate `pointermove`.
+   */
+  private _hasMoved: boolean = false
 
   /** The {@link eUp} from the last successful click */
   eLastDown?: CanvasPointerEvent
@@ -127,9 +137,10 @@ export class CanvasPointer {
    * @param pointer [DEPRECATED] This parameter will be removed in a future release.
    * @param eMove The pointermove event of this ongoing drag action.
    *
-   * It is possible for no `pointermove` events to occur, but still be far from
-   * the original `pointerdown` event. In this case, {@link eMove} will be null, and
-   * {@link onDragEnd} will be called immediately after {@link onDragStart}.
+   * A drag will only start if at least one genuine `pointermove` event was received
+   * AND the pointer exceeded the click drift threshold. If no move events occurred
+   * between `pointerdown` and `pointerup` (as is common in VR browsers), the
+   * interaction is treated as a click regardless of position difference.
    */
   onDragStart?(pointer: this, eMove?: CanvasPointerEvent): unknown
 
@@ -183,13 +194,18 @@ export class CanvasPointer {
 
   /**
    * Callback for `pointerdown` events.  To be used as the event handler (or called by it).
-   * @param e The `pointerdown` event
+   *
+   * Does NOT call `setPointerCapture` — that would hijack ALL subsequent pointer events to this
+   * element, breaking interactions with other elements (buttons, inputs, Vue nodes) in VR browsers
+   * where the pointerup/pointercancel sequence may not follow the desktop event model.
+   *
+   * The canvas already intercepts `pointermove` / `pointerup` via capture-phase listeners on
+   * `document`, so drag tracking continues to work even when the pointer leaves the canvas.
    */
   down(e: CanvasPointerEvent): void {
     this.reset()
     this.eDown = e
     this.pointerId = e.pointerId
-    this.element.setPointerCapture(e.pointerId)
   }
 
   /**
@@ -199,6 +215,13 @@ export class CanvasPointer {
   move(e: CanvasPointerEvent): void {
     const { eDown } = this
     if (!eDown) return
+
+    // Reject events from a different pointer than the one that started
+    // this interaction. Prevents cross-contamination in multi-pointer
+    // environments such as VR browsers.
+    if (this.pointerId !== undefined && e.pointerId !== this.pointerId) {
+      return
+    }
 
     // No buttons down, but eDown exists - clean up & leave
     if (!e.buttons) {
@@ -212,15 +235,18 @@ export class CanvasPointer {
       this.reset()
       return
     }
+    this._hasMoved = true
     this.eMove = e
     this.onDrag?.(e)
 
     // Dragging, but no callback to run
     if (this.dragStarted) return
 
-    const longerThanBufferTime =
-      e.timeStamp - eDown.timeStamp > CanvasPointer.bufferTime
-    if (longerThanBufferTime || !this._hasSamePosition(e, eDown)) {
+    // Drag starts when the pointer actually moves past the click drift
+    // threshold. No time-based assumption: holding the pointer still (even
+    // for a long time) should not auto-activate drag — that would break VR
+    // browsers where controller/gaze tracking jitter exceeds bufferTime.
+    if (!this._hasSamePosition(e, eDown)) {
       this._setDragStarted(e)
     }
   }
@@ -231,6 +257,9 @@ export class CanvasPointer {
    */
   up(e: CanvasPointerEvent): boolean {
     if (e.button !== this.eDown?.button) return false
+    if (this.pointerId !== undefined && e.pointerId !== this.pointerId) {
+      return false
+    }
 
     this._completeClick(e)
     const { dragStarted } = this
@@ -247,8 +276,11 @@ export class CanvasPointer {
     if (this.dragStarted) {
       // A move event already started drag
       this.onDragEnd?.(e)
-    } else if (!this._hasSamePosition(e, eDown)) {
-      // Teleport without a move event (e.g. tab out, move, tab back)
+    } else if (this._hasMoved && !this._hasSamePosition(e, eDown)) {
+      // Teleport without a move event (e.g. tab out, move, tab back).
+      // Only treat as drag if the pointer actually moved — in VR browsers
+      // the pointerup position may differ from pointerdown due to head
+      // movement or controller jitter, even when no drag was intended.
       this._setDragStarted()
       this.onDragEnd?.(e)
     } else if (this.onDoubleClick && this._isDoubleClick()) {
@@ -495,6 +527,7 @@ export class CanvasPointer {
     this.isDown = false
     this.isDouble = false
     this.dragStarted = false
+    this._hasMoved = false
     this.resizeDirection = undefined
 
     if (this.clearEventsOnReset) {

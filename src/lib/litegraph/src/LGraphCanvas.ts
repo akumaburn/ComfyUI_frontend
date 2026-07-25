@@ -2040,10 +2040,14 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     canvas.addEventListener('pointerdown', this._mousedown_callback, true)
     canvas.addEventListener('wheel', this._mousewheel_callback, false)
 
-    canvas.addEventListener('pointerup', this._mouseup_callback, true)
+    // Use document-level capture so drag tracking works when the pointer
+    // leaves the canvas — without setPointerCapture (which would hijack
+    // events away from buttons/inputs and permanently capture in VR).
     canvas.addEventListener('pointermove', this._mousemove_callback)
+    document.addEventListener('pointermove', this._mousemove_callback, true)
     canvas.addEventListener('pointerout', this._mouseout_callback)
-    canvas.addEventListener('pointercancel', this._mousecancel_callback, true)
+    document.addEventListener('pointerup', this._mouseup_callback, true)
+    document.addEventListener('pointercancel', this._mousecancel_callback, true)
 
     canvas.addEventListener('contextmenu', this._doNothing)
     // Prevent middle-click paste (PRIMARY clipboard on Linux) - fixes #4464
@@ -2081,6 +2085,13 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     canvas.removeEventListener('pointerout', this._mouseout_callback!)
     canvas.removeEventListener('pointermove', this._mousemove_callback!)
     canvas.removeEventListener('pointerup', this._mouseup_callback!)
+    document.removeEventListener('pointermove', this._mousemove_callback!, true)
+    document.removeEventListener('pointerup', this._mouseup_callback!, true)
+    document.removeEventListener(
+      'pointercancel',
+      this._mousecancel_callback!,
+      true
+    )
     canvas.removeEventListener('pointerdown', this._mousedown_callback!)
     canvas.removeEventListener('wheel', this._mousewheel_callback!)
     canvas.removeEventListener('keydown', this._key_callback!)
@@ -3305,6 +3316,17 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     this.graph_mouse[1] = y
 
     if (e.isPrimary) pointer.move(e)
+
+    // If pointer.move() reset the pointer state (e.g., button released or
+    // never properly held), clear any persistent canvas drag state.
+    // In VR browsers, pointerup may never arrive, leaving dragging_canvas
+    // stuck to true and causing the canvas to pan on every subsequent
+    // pointermove — including hovers over buttons and inputs.
+    if (!pointer.eDown) {
+      this.dragging_canvas = false
+      this.last_mouse_dragging = false
+      this.dragging_rectangle = null
+    }
 
     /** See {@link state}.{@link LGraphCanvasState.hoveringOver hoveringOver} */
     let underPointer = CanvasItem.Nothing

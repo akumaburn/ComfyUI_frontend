@@ -40,8 +40,11 @@ export function useNodePointerInteractions(
   }
 
   let hasDraggingStarted = false
+  let activePointerId: number | undefined = undefined
 
-  const dragGuard = useClickDragGuard(3)
+  // Threshold must align with CanvasPointer.maxClickDrift to prevent
+  // accidental drag activation from VR controller/gaze tracking jitter.
+  const dragGuard = useClickDragGuard(30)
 
   function onPointerdown(event: PointerEvent) {
     if (forwardMiddlePointerIfNeeded(event, isMiddlePointerInput)) return
@@ -68,6 +71,7 @@ export function useNodePointerInteractions(
       return
     }
 
+    activePointerId = event.pointerId
     dragGuard.recordStart(event)
 
     safeDragStart(event, nodeId)
@@ -82,6 +86,13 @@ export function useNodePointerInteractions(
     const nodeId = toValue(nodeIdRef)
 
     if (isPinnedNode(nodeId)) {
+      return
+    }
+
+    // Only respond to the pointer that initiated the current interaction.
+    // Prevents stale/cross-contaminated pointer events in VR environments
+    // where multiple pointers or gaze-based tracking may be active.
+    if (activePointerId !== undefined && event.pointerId !== activePointerId) {
       return
     }
 
@@ -137,6 +148,11 @@ export function useNodePointerInteractions(
   }
 
   function onPointerup(event: PointerEvent) {
+    if (event.pointerId !== activePointerId && activePointerId !== undefined) {
+      return
+    }
+    activePointerId = undefined
+
     if (forwardMiddlePointerIfNeeded(event, isMiddleButtonEvent)) return
     // Don't handle pointer events when canvas is in panning mode - forward to canvas instead
     const canHandlePointer = shouldHandleNodePointerEvents.value
@@ -166,6 +182,7 @@ export function useNodePointerInteractions(
   }
 
   function onPointercancel(event: PointerEvent) {
+    activePointerId = undefined
     if (!layoutStore.isDraggingVueNodes.value) return
     safeDragEnd(event)
   }

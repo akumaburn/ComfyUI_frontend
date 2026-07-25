@@ -174,8 +174,8 @@ describe('useNodePointerInteractions', () => {
     // Simulate drag by moving pointer beyond threshold
     pointerHandlers.onPointermove(
       createPointerEvent('pointermove', {
-        clientX: 110,
-        clientY: 110,
+        clientX: 150,
+        clientY: 150,
         buttons: 1
       })
     )
@@ -196,8 +196,8 @@ describe('useNodePointerInteractions', () => {
     // Simulate drag by moving pointer beyond threshold
     pointerHandlers.onPointermove(
       createPointerEvent('pointermove', {
-        clientX: 110,
-        clientY: 110,
+        clientX: 150,
+        clientY: 150,
         buttons: 1
       })
     )
@@ -222,8 +222,8 @@ describe('useNodePointerInteractions', () => {
     // Move pointer beyond threshold to start drag
     pointerHandlers.onPointermove(
       createPointerEvent('pointermove', {
-        clientX: 110,
-        clientY: 110,
+        clientX: 135,
+        clientY: 135,
         buttons: 1
       })
     )
