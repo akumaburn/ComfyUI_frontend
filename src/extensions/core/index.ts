@@ -1,4 +1,5 @@
 import { isCloud, isNightly } from '@/platform/distribution/types'
+import { registerAgentPanelExtension } from './agentPanel'
 
 import './clipspace'
 import './contextMenuFilter'
@@ -10,7 +11,9 @@ import './electronAdapter'
 import './groupNode'
 import './groupOptions'
 import './imageCompare'
+import './imageCompositor'
 import './imageCrop'
+import './layerEditor'
 // load3d and saveMesh are loaded on-demand to defer THREE.js (~1.8MB)
 // The lazy loader triggers loading when a 3D node is used
 import './load3dLazy'
@@ -34,8 +37,13 @@ import './webcamCapture'
 import './widgetInputs'
 
 // Cloud-only extensions - tree-shaken in OSS builds
-if (isCloud) {
+// The literal __DISTRIBUTION__ comparison (not the isCloud const) is what
+// dead-code-eliminates this block and its posthog-js import from OSS builds.
+if (__DISTRIBUTION__ === 'cloud') {
   await import('./cloudRemoteConfig')
+  // Called, not dynamically imported: the gate must be part of the core
+  // graph so a flag-off cloud session fetches zero agent chunks.
+  registerAgentPanelExtension()
   await import('./cloudBadges')
   await import('./cloudSessionCookie')
 }
